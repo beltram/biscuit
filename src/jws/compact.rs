@@ -530,6 +530,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_family = "wasm"))]
     fn compact_jws_verify_es256() {
         use data_encoding::HEXUPPER;
 

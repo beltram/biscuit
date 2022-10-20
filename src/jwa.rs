@@ -90,11 +90,14 @@ pub enum SignatureAlgorithm {
     /// RSASSA-PKCS1-v1_5 using SHA-512
     RS512,
     /// ECDSA using P-256 and SHA-256
+    #[cfg(not(target_family = "wasm"))]
     ES256,
     /// ECDSA using P-384 and SHA-384
+    #[cfg(not(target_family = "wasm"))]
     ES384,
     /// ECDSA using P-521 and SHA-512 --
     /// This variant is [unsupported](https://github.com/briansmith/ring/issues/268) and will probably never be.
+    #[cfg(not(target_family = "wasm"))]
     ES512,
     /// RSASSA-PSS using SHA-256 and MGF1 with SHA-256.
     /// The size of the salt value is the same size as the hash function output.
@@ -261,6 +264,7 @@ impl SignatureAlgorithm {
             None => Self::sign_none(secret),
             HS256 | HS384 | HS512 => Self::sign_hmac(data, secret, self),
             RS256 | RS384 | RS512 | PS256 | PS384 | PS512 => Self::sign_rsa(data, secret, self),
+            #[cfg(not(target_family = "wasm"))]
             ES256 | ES384 | ES512 => Self::sign_ecdsa(data, secret, self),
         }
     }
@@ -277,7 +281,11 @@ impl SignatureAlgorithm {
         match self {
             None => Self::verify_none(expected_signature, secret),
             HS256 | HS384 | HS512 => Self::verify_hmac(expected_signature, data, secret, self),
-            RS256 | RS384 | RS512 | PS256 | PS384 | PS512 | ES256 | ES384 | ES512 => {
+            RS256 | RS384 | RS512 | PS256 | PS384 | PS512 => {
+                Self::verify_public_key(expected_signature, data, secret, self)
+            }
+            #[cfg(not(target_family = "wasm"))]
+            ES256 | ES384 | ES512 => {
                 Self::verify_public_key(expected_signature, data, secret, self)
             }
         }
@@ -323,7 +331,7 @@ impl SignatureAlgorithm {
         };
 
         let rng = rand::SystemRandom::new();
-        let mut signature = vec![0; key_pair.public_modulus_len()];
+        let mut signature = vec![0; key_pair.public().modulus_len()];
         let padding_algorithm: &dyn signature::RsaEncoding = match algorithm {
             SignatureAlgorithm::RS256 => &signature::RSA_PKCS1_SHA256,
             SignatureAlgorithm::RS384 => &signature::RSA_PKCS1_SHA384,
@@ -338,6 +346,7 @@ impl SignatureAlgorithm {
         Ok(signature)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn sign_ecdsa(
         data: &[u8],
         secret: &Secret,
@@ -347,13 +356,16 @@ impl SignatureAlgorithm {
             Secret::EcdsaKeyPair(ref key_pair) => key_pair,
             _ => Err("Invalid secret type. An EcdsaKeyPair is required".to_string())?,
         };
-        if let SignatureAlgorithm::ES512 = algorithm {
-            // See https://github.com/briansmith/ring/issues/268
-            Err(Error::UnsupportedOperation)
-        } else {
-            let rng = rand::SystemRandom::new();
-            let sig = key_pair.as_ref().sign(&rng, data)?;
-            Ok(sig.as_ref().to_vec())
+        match algorithm {
+            SignatureAlgorithm::PS512 => {
+                // See https://github.com/briansmith/ring/issues/268
+                Err(Error::UnsupportedOperation)
+            }
+            _ => {
+                let rng = rand::SystemRandom::new();
+                let sig = key_pair.as_ref().sign(&rng, data)?;
+                Ok(sig.as_ref().to_vec())
+            }
         }
     }
 
@@ -397,8 +409,11 @@ impl SignatureAlgorithm {
                     SignatureAlgorithm::PS256 => &signature::RSA_PSS_2048_8192_SHA256,
                     SignatureAlgorithm::PS384 => &signature::RSA_PSS_2048_8192_SHA384,
                     SignatureAlgorithm::PS512 => &signature::RSA_PSS_2048_8192_SHA512,
+                    #[cfg(not(target_family = "wasm"))]
                     SignatureAlgorithm::ES256 => &signature::ECDSA_P256_SHA256_FIXED,
+                    #[cfg(not(target_family = "wasm"))]
                     SignatureAlgorithm::ES384 => &signature::ECDSA_P384_SHA384_FIXED,
+                    #[cfg(not(target_family = "wasm"))]
                     SignatureAlgorithm::ES512 => Err(Error::UnsupportedOperation)?,
                     _ => unreachable!("Should not happen"),
                 };
@@ -447,6 +462,7 @@ impl SignatureAlgorithm {
                 public_key.verify(params, data, expected_signature)?;
                 Ok(())
             }
+            #[cfg(not(target_family = "wasm"))]
             Secret::EcdsaKeyPair(ref keypair) => {
                 let verification_algorithm: &dyn signature::VerificationAlgorithm = match algorithm
                 {
@@ -982,6 +998,7 @@ mod tests {
 
     /// This signature is non-deterministic.
     #[test]
+    #[cfg(not(target_family = "wasm"))]
     fn sign_and_verify_es256_round_trip() {
         let private_key = Secret::ecdsa_keypair_from_file(
             SignatureAlgorithm::ES256,
@@ -1005,6 +1022,7 @@ mod tests {
 
     /// This signature is non-deterministic.
     #[test]
+    #[cfg(not(target_family = "wasm"))]
     fn sign_and_verify_es256_round_trip_with_keypair() {
         let key = Secret::ecdsa_keypair_from_file(
             SignatureAlgorithm::ES256,
@@ -1025,6 +1043,7 @@ mod tests {
 
     /// Test case from https://github.com/briansmith/ring/blob/a13b8e2/src/ec/suite_b/ecdsa_verify_fixed_tests.txt
     #[test]
+    #[cfg(not(target_family = "wasm"))]
     fn verify_es256() {
         use data_encoding::HEXUPPER;
 
@@ -1044,6 +1063,7 @@ mod tests {
 
     /// Test case from https://github.com/briansmith/ring/blob/a13b8e2/src/ec/suite_b/ecdsa_verify_fixed_tests.txt
     #[test]
+    #[cfg(not(target_family = "wasm"))]
     fn verify_es384() {
         use data_encoding::HEXUPPER;
 
@@ -1065,6 +1085,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "UnsupportedOperation")]
+    #[cfg(not(target_family = "wasm"))]
     fn verify_es512() {
         let payload: Vec<u8> = vec![];
         let signature: Vec<u8> = vec![];
@@ -1134,6 +1155,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "UnspecifiedCryptographicError")]
+    #[cfg(not(target_family = "wasm"))]
     fn invalid_es256() {
         let public_key = Secret::public_key_from_file("test/fixtures/rsa_public_key.der").unwrap();
         let invalid_signature = "broken".to_string();

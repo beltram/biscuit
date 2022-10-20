@@ -627,6 +627,9 @@ mod tests {
     use crate::test::assert_serde_json;
     use crate::JWE;
 
+    use wasm_bindgen_test::*;
+    wasm_bindgen_test_configure!(run_in_browser);
+
     fn cek_oct_key(len: usize) -> jwk::JWK<Empty> {
         // Construct the encryption key
         let mut key: Vec<u8> = vec![0; len];
@@ -641,6 +644,7 @@ mod tests {
         }
     }
 
+    #[wasm_bindgen_test]
     #[test]
     fn compression_algorithm_serde_token() {
         #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -681,6 +685,7 @@ mod tests {
         );
     }
 
+    #[wasm_bindgen_test]
     #[test]
     fn compression_algorithm_json_serde() {
         #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -705,6 +710,7 @@ mod tests {
         );
     }
 
+    #[wasm_bindgen_test]
     #[test]
     fn jwe_interoperability_check() {
         // This test vector is created by using python-jwcrypto (https://jwcrypto.readthedocs.io/en/latest/)
@@ -737,6 +743,7 @@ mod tests {
         assert_eq!(decrypted_str, "Encrypted");
     }
 
+    #[wasm_bindgen_test]
     #[test]
     fn jwe_header_round_trips() {
         let test_value: Header<Empty> = From::from(RegisteredHeader {
@@ -764,6 +771,7 @@ mod tests {
         assert_serde_json(&test_value, Some(test_json));
     }
 
+    #[wasm_bindgen_test]
     #[test]
     fn custom_jwe_header_round_trip() {
         #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -786,6 +794,7 @@ mod tests {
         assert_serde_json(&test_value, Some(test_json));
     }
 
+    #[wasm_bindgen_test]
     #[test]
     fn jwe_a256gcmkw_a256gcm_string_round_trip() {
         use std::str;
@@ -840,6 +849,7 @@ mod tests {
         assert_eq!(decrypted_str, payload);
     }
 
+    #[wasm_bindgen_test]
     #[test]
     fn jwe_a256gcmkw_a256gcm_jws_round_trip() {
         // Construct the JWS
@@ -915,6 +925,7 @@ mod tests {
         assert_eq!(jws, *decrypted_jws);
     }
 
+    #[wasm_bindgen_test]
     #[test]
     fn jwe_dir_aes256gcm_jws_round_trip() {
         // Construct the JWS
@@ -990,8 +1001,8 @@ mod tests {
         assert_eq!(jws, *decrypted_jws);
     }
 
+    #[wasm_bindgen_test]
     #[test]
-    #[should_panic(expected = "WrongAlgorithmHeader")]
     fn decrypt_with_mismatch_cek_algorithm() {
         // Construct the encryption key
         let key = cek_oct_key(256 / 8);
@@ -1013,17 +1024,19 @@ mod tests {
         // Encrypt
         let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
 
-        let _ = encrypted_jwe
-            .into_decrypted(
-                &key,
-                KeyManagementAlgorithm::A128GCMKW,
-                ContentEncryptionAlgorithm::A256GCM,
-            )
-            .unwrap();
+        let result = encrypted_jwe.into_decrypted(
+            &key,
+            KeyManagementAlgorithm::A128GCMKW,
+            ContentEncryptionAlgorithm::A256GCM,
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::ValidationError(ValidationError::WrongAlgorithmHeader)
+        ));
     }
 
+    #[wasm_bindgen_test]
     #[test]
-    #[should_panic(expected = "WrongAlgorithmHeader")]
     fn decrypt_with_mismatch_enc_algorithm() {
         // Construct the encryption key
         let key = cek_oct_key(256 / 8);
@@ -1045,31 +1058,38 @@ mod tests {
         // Encrypt
         let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
 
-        let _ = encrypted_jwe
-            .into_decrypted(
-                &key,
-                KeyManagementAlgorithm::A256GCMKW,
-                ContentEncryptionAlgorithm::A128GCM,
-            )
-            .unwrap();
+        let result = encrypted_jwe.into_decrypted(
+            &key,
+            KeyManagementAlgorithm::A256GCMKW,
+            ContentEncryptionAlgorithm::A128GCM,
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::ValidationError(ValidationError::WrongAlgorithmHeader)
+        ));
     }
 
+    #[wasm_bindgen_test]
     #[test]
-    #[should_panic(expected = "PartsLengthError")]
     fn decrypt_with_incorrect_length() {
         let key = cek_oct_key(256 / 8);
         let invalid = Compact::<Empty, Empty>::new_encrypted("INVALID");
-        let _ = invalid
-            .into_decrypted(
-                &key,
-                KeyManagementAlgorithm::A256GCMKW,
-                ContentEncryptionAlgorithm::A128GCM,
-            )
-            .unwrap();
+        let result = invalid.into_decrypted(
+            &key,
+            KeyManagementAlgorithm::A256GCMKW,
+            ContentEncryptionAlgorithm::A128GCM,
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::DecodeError(DecodeError::PartsLengthError {
+                expected: _,
+                actual: _
+            })
+        ));
     }
 
+    #[wasm_bindgen_test]
     #[test]
-    #[should_panic(expected = "UnspecifiedCryptographicError")]
     fn invalid_nonce_for_aes256gcmkw() {
         // Construct the encryption key
         let key = cek_oct_key(256 / 8);
@@ -1098,17 +1118,19 @@ mod tests {
         compact.parts[0] = not_err!(header.to_base64());
 
         let encrypted_jwe = Compact::<Empty, Empty>::new_encrypted(&compact.to_string());
-        let _ = encrypted_jwe
-            .into_decrypted(
-                &key,
-                KeyManagementAlgorithm::A256GCMKW,
-                ContentEncryptionAlgorithm::A256GCM,
-            )
-            .unwrap();
+        let result = encrypted_jwe.into_decrypted(
+            &key,
+            KeyManagementAlgorithm::A256GCMKW,
+            ContentEncryptionAlgorithm::A256GCM,
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::UnspecifiedCryptographicError
+        ));
     }
 
+    #[wasm_bindgen_test]
     #[test]
-    #[should_panic(expected = "UnspecifiedCryptographicError")]
     fn invalid_tag_for_aes256gcmkw() {
         // Construct the encryption key
         let key = cek_oct_key(256 / 8);
@@ -1137,17 +1159,19 @@ mod tests {
         compact.parts[0] = not_err!(header.to_base64());
 
         let encrypted_jwe = Compact::<Empty, Empty>::new_encrypted(&compact.to_string());
-        let _ = encrypted_jwe
-            .into_decrypted(
-                &key,
-                KeyManagementAlgorithm::A256GCMKW,
-                ContentEncryptionAlgorithm::A256GCM,
-            )
-            .unwrap();
+        let result = encrypted_jwe.into_decrypted(
+            &key,
+            KeyManagementAlgorithm::A256GCMKW,
+            ContentEncryptionAlgorithm::A256GCM,
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::UnspecifiedCryptographicError
+        ));
     }
 
+    #[wasm_bindgen_test]
     #[test]
-    #[should_panic(expected = "UnspecifiedCryptographicError")]
     fn invalid_tag_for_aes256gcm() {
         // Construct the encryption key
         let key = cek_oct_key(256 / 8);
@@ -1174,18 +1198,20 @@ mod tests {
         compact.parts[4] = not_err!(vec![0u8; 1].to_base64());
 
         let encrypted_jwe = Compact::<Empty, Empty>::new_encrypted(&compact.to_string());
-        let _ = encrypted_jwe
-            .into_decrypted(
-                &key,
-                KeyManagementAlgorithm::A256GCMKW,
-                ContentEncryptionAlgorithm::A256GCM,
-            )
-            .unwrap();
+        let result = encrypted_jwe.into_decrypted(
+            &key,
+            KeyManagementAlgorithm::A256GCMKW,
+            ContentEncryptionAlgorithm::A256GCM,
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::UnspecifiedCryptographicError
+        ));
     }
 
     /// This test modifies the header so the tag (aad for the AES GCM) included becomes incorrect
+    #[wasm_bindgen_test]
     #[test]
-    #[should_panic(expected = "UnspecifiedCryptographicError")]
     fn invalid_modified_header_for_aes256gcm() {
         // Construct the encryption key
         let key = cek_oct_key(256 / 8);
@@ -1214,18 +1240,20 @@ mod tests {
         compact.parts[0] = not_err!(header.to_base64());
 
         let encrypted_jwe = Compact::<Empty, Empty>::new_encrypted(&compact.to_string());
-        let _ = encrypted_jwe
-            .into_decrypted(
-                &key,
-                KeyManagementAlgorithm::A256GCMKW,
-                ContentEncryptionAlgorithm::A256GCM,
-            )
-            .unwrap();
+        let result = encrypted_jwe.into_decrypted(
+            &key,
+            KeyManagementAlgorithm::A256GCMKW,
+            ContentEncryptionAlgorithm::A256GCM,
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::UnspecifiedCryptographicError
+        ));
     }
 
     /// This test modifies the encrypted cek
+    #[wasm_bindgen_test]
     #[test]
-    #[should_panic(expected = "UnspecifiedCryptographicError")]
     fn invalid_modified_encrypted_cek_for_aes256gcm() {
         // Construct the encryption key
         let key = cek_oct_key(256 / 8);
@@ -1252,18 +1280,20 @@ mod tests {
         compact.parts[1] = not_err!(vec![0u8; 256 / 8].to_base64());
 
         let encrypted_jwe = Compact::<Empty, Empty>::new_encrypted(&compact.to_string());
-        let _ = encrypted_jwe
-            .into_decrypted(
-                &key,
-                KeyManagementAlgorithm::A256GCMKW,
-                ContentEncryptionAlgorithm::A256GCM,
-            )
-            .unwrap();
+        let result = encrypted_jwe.into_decrypted(
+            &key,
+            KeyManagementAlgorithm::A256GCMKW,
+            ContentEncryptionAlgorithm::A256GCM,
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::UnspecifiedCryptographicError
+        ));
     }
 
     /// This test modifies the encrypted payload
+    #[wasm_bindgen_test]
     #[test]
-    #[should_panic(expected = "UnspecifiedCryptographicError")]
     fn invalid_modified_encrypted_payload_for_aes256gcm() {
         // Construct the encryption key
         let key = cek_oct_key(256 / 8);
@@ -1292,18 +1322,20 @@ mod tests {
         compact.parts[3] = not_err!(vec![0u8; 32].to_base64());
 
         let encrypted_jwe = Compact::<Empty, Empty>::new_encrypted(&compact.to_string());
-        let _ = encrypted_jwe
-            .into_decrypted(
-                &key,
-                KeyManagementAlgorithm::A256GCMKW,
-                ContentEncryptionAlgorithm::A256GCM,
-            )
-            .unwrap();
+        let result = encrypted_jwe.into_decrypted(
+            &key,
+            KeyManagementAlgorithm::A256GCMKW,
+            ContentEncryptionAlgorithm::A256GCM,
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::UnspecifiedCryptographicError
+        ));
     }
 
     /// This test modifies the nonce
+    #[wasm_bindgen_test]
     #[test]
-    #[should_panic(expected = "UnspecifiedCryptographicError")]
     fn invalid_modified_encrypted_nonce_for_aes256gcm() {
         // Construct the encryption key
         let key = cek_oct_key(256 / 8);
@@ -1332,12 +1364,14 @@ mod tests {
         compact.parts[2] = not_err!(vec![0u8; 96 / 8].to_base64());
 
         let encrypted_jwe = Compact::<Empty, Empty>::new_encrypted(&compact.to_string());
-        let _ = encrypted_jwe
-            .into_decrypted(
-                &key,
-                KeyManagementAlgorithm::A256GCMKW,
-                ContentEncryptionAlgorithm::A256GCM,
-            )
-            .unwrap();
+        let result = encrypted_jwe.into_decrypted(
+            &key,
+            KeyManagementAlgorithm::A256GCMKW,
+            ContentEncryptionAlgorithm::A256GCM,
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::UnspecifiedCryptographicError
+        ));
     }
 }

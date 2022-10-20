@@ -146,6 +146,7 @@ impl Signable {
 #[derive(Clone)]
 pub struct SignedData {
     data: Signable,
+    #[allow(dead_code)]
     secret: Secret,
     signature: Vec<u8>,
 }
@@ -171,7 +172,10 @@ impl SignedData {
     ///     &ECDSA_P256_SHA256_FIXED_SIGNING,
     ///     &ring::rand::SystemRandom::new())?;
     /// let keypair = EcdsaKeyPair::from_pkcs8(
-    ///     &ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref())?;
+    ///     &ECDSA_P256_SHA256_FIXED_SIGNING,
+    ///     pkcs8.as_ref(),
+    ///     &ring::rand::SystemRandom::new(),
+    /// )?;
     /// let secret = Secret::EcdsaKeyPair(Arc::new(keypair));
     /// let signed = SignedData::sign(data, secret)?;
     /// # Ok::<(), biscuit::errors::Error>(())
@@ -489,6 +493,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_family = "wasm"))]
     fn flattened_jws_verify_es256() {
         use data_encoding::HEXUPPER;
 

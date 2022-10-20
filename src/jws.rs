@@ -58,7 +58,7 @@ pub enum Secret {
     ///
     /// let secret = Secret::rsa_keypair_from_file("test/fixtures/rsa_private_key.der");
     /// ```
-    RsaKeyPair(Arc<signature::RsaKeyPair>),
+    RsaKeyPair(Arc<ring::rsa::KeyPair>),
     /// An ECDSA Key pair constructed from a PKCS8 DER encoded private key
     ///
     /// To generate a private key, use
@@ -186,11 +186,12 @@ impl Secret {
     /// See example in the [`Secret::RsaKeyPair`] variant documentation for usage.
     pub fn rsa_keypair_from_file(path: &str) -> Result<Self, Error> {
         let der = Self::read_bytes(path)?;
-        let key_pair = signature::RsaKeyPair::from_der(der.as_slice())?;
+        let key_pair = ring::rsa::KeyPair::from_der(der.as_slice())?;
         Ok(Secret::RsaKeyPair(Arc::new(key_pair)))
     }
 
     /// Convenience function to get the ECDSA Keypair from a PKCS8-DER encoded EC private key.
+    #[cfg(not(target_family = "wasm"))]
     pub fn ecdsa_keypair_from_file(
         algorithm: SignatureAlgorithm,
         path: &str,
@@ -201,7 +202,11 @@ impl Secret {
             SignatureAlgorithm::ES384 => &signature::ECDSA_P384_SHA384_FIXED_SIGNING,
             _ => return Err(Error::UnsupportedOperation),
         };
-        let key_pair = signature::EcdsaKeyPair::from_pkcs8(ring_algorithm, der.as_slice())?;
+        let key_pair = signature::EcdsaKeyPair::from_pkcs8(
+            ring_algorithm,
+            der.as_slice(),
+            &ring::rand::SystemRandom::new(),
+        )?;
         Ok(Secret::EcdsaKeyPair(Arc::new(key_pair)))
     }
 
