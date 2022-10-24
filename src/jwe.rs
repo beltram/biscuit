@@ -159,13 +159,41 @@ pub struct RegisteredHeader {
 pub struct CekAlgorithmHeader {
     /// Header for AES GCM Keywrap algorithm.
     /// The initialization vector, or nonce used in the encryption
-    #[serde(rename = "iv", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "iv",
+        skip_serializing_if = "Option::is_none",
+        with = "base64"
+    )]
     pub nonce: Option<Vec<u8>>,
 
     /// Header for AES GCM Keywrap algorithm.
     /// The authentication tag resulting from the encryption
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "tag",
+        skip_serializing_if = "Option::is_none",
+        with = "base64"
+    )]
     pub tag: Option<Vec<u8>>,
+}
+
+mod base64 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        value
+            .as_ref()
+            .map(|v| base64::encode_config(v, base64::URL_SAFE_NO_PAD))
+            .serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
+        Option::<String>::deserialize(d)?
+            .map(|v| base64::decode_config(v.as_bytes(), base64::URL_SAFE_NO_PAD))
+            .transpose()
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 /// JWE Header, consisting of the registered fields and other custom fields
