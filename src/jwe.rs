@@ -306,7 +306,7 @@ impl From<RegisteredHeader> for Header<Empty> {
 /// let options = EncryptionOptions::AES_GCM { nonce: nonce_bytes };
 ///
 /// // Encrypt
-/// let encrypted_jwe = jwe.encrypt(&key, &options).unwrap();
+/// let encrypted_jwe = jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>).unwrap();
 ///
 /// // Decrypt
 /// let decrypted_jwe = encrypted_jwe
@@ -371,10 +371,11 @@ where
         self,
         key: &jwk::JWK<K>,
         options: &EncryptionOptions,
+        rng: &mut Option<impl rand::RngCore>,
     ) -> Result<Self, Error> {
         match self {
             Compact::Encrypted(_) => Ok(self),
-            Compact::Decrypted { .. } => self.encrypt(key, options),
+            Compact::Decrypted { .. } => self.encrypt(key, options, rng),
         }
     }
 
@@ -392,6 +393,7 @@ where
         &self,
         key: &jwk::JWK<K>,
         options: &EncryptionOptions,
+        rng: &mut Option<impl rand::RngCore>,
     ) -> Result<Self, Error> {
         match *self {
             Compact::Encrypted(_) => Err(Error::UnsupportedOperation),
@@ -413,17 +415,18 @@ where
                                 header
                                     .registered
                                     .enc_algorithm
-                                    .random_encryption_options()?,
+                                    .random_encryption_options(rng)?,
                             ),
                         ),
                     };
 
                 // RFC 7516 Section 5.1 describes the steps involved in encryption.
                 // From steps 1 to 8, we will first determine the CEK, and then encrypt the CEK.
-                let cek = header
-                    .registered
-                    .cek_algorithm
-                    .cek(header.registered.enc_algorithm, key)?;
+                let cek = header.registered.cek_algorithm.cek(
+                    header.registered.enc_algorithm,
+                    key,
+                    rng,
+                )?;
                 let encrypted_cek = header.registered.cek_algorithm.wrap_key(
                     cek.algorithm.octet_key()?,
                     key,
@@ -650,7 +653,7 @@ mod tests {
     use serde_test::{assert_tokens, Token};
 
     use super::*;
-    use crate::jwa::{self, random_aes_gcm_nonce, rng};
+    use crate::jwa::{self, get_rng, random_aes_gcm_nonce};
     use crate::jws;
     use crate::test::assert_serde_json;
     use crate::JWE;
@@ -661,7 +664,7 @@ mod tests {
     fn cek_oct_key(len: usize) -> jwk::JWK<Empty> {
         // Construct the encryption key
         let mut key: Vec<u8> = vec![0; len];
-        not_err!(rng().fill(&mut key));
+        not_err!(get_rng().fill(&mut key));
         jwk::JWK {
             common: Default::default(),
             additional: Default::default(),
@@ -841,11 +844,12 @@ mod tests {
             payload.as_bytes().to_vec(),
         );
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
 
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         {
             // Check that new header values are added
@@ -918,11 +922,12 @@ mod tests {
             jws.clone(),
         );
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
 
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         {
             // Check that new header values are added
@@ -994,11 +999,12 @@ mod tests {
             jws.clone(),
         );
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
 
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         {
             let compact = not_err!(encrypted_jwe.encrypted());
@@ -1046,11 +1052,12 @@ mod tests {
             payload.as_bytes().to_vec(),
         );
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
 
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         let result = encrypted_jwe.into_decrypted(
             &key,
@@ -1081,10 +1088,11 @@ mod tests {
         );
 
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         let result = encrypted_jwe.into_decrypted(
             &key,
@@ -1134,10 +1142,11 @@ mod tests {
         );
 
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         // Modify the JWE
         let mut compact = encrypted_jwe.unwrap_encrypted();
@@ -1175,10 +1184,11 @@ mod tests {
         );
 
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         // Modify the JWE
         let mut compact = encrypted_jwe.unwrap_encrypted();
@@ -1216,10 +1226,11 @@ mod tests {
         );
 
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         // Modify the JWE
         let mut compact = encrypted_jwe.unwrap_encrypted();
@@ -1255,11 +1266,12 @@ mod tests {
             payload.as_bytes().to_vec(),
         );
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
 
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         // Modify the JWE
         let mut compact = encrypted_jwe.unwrap_encrypted();
@@ -1298,10 +1310,11 @@ mod tests {
         );
 
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         // Modify the JWE
         let mut compact = encrypted_jwe.unwrap_encrypted();
@@ -1337,11 +1350,12 @@ mod tests {
             payload.as_bytes().to_vec(),
         );
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
 
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         // Modify the JWE
         let mut compact = encrypted_jwe.unwrap_encrypted();
@@ -1379,11 +1393,12 @@ mod tests {
             payload.as_bytes().to_vec(),
         );
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
 
         // Encrypt
-        let encrypted_jwe = not_err!(jwe.encrypt(&key, &options));
+        let encrypted_jwe =
+            not_err!(jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>));
 
         // Modify the JWE
         let mut compact = encrypted_jwe.unwrap_encrypted();

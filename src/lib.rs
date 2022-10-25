@@ -293,7 +293,7 @@ pub type JWT<T, H> = jws::Compact<ClaimsSet<T>, H>;
 /// );
 ///
 /// // Encrypt
-/// let encrypted_jwe = jwe.encrypt(&key, &options).unwrap();
+/// let encrypted_jwe = jwe.encrypt(&key, &options, &mut None::<rand_chacha::ChaCha20Rng>).unwrap();
 ///
 /// let token = encrypted_jwe.unwrap_encrypted().to_string();
 ///

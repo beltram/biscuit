@@ -32,6 +32,7 @@ num-traits = "0.2"
 serde = { version = "1.0.126", features=["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 base64 = "0.13"
+rand = "0.8"
 
 [dependencies.ring]
 git = "https://github.com/briansmith/ring.git"
@@ -42,6 +43,7 @@ features = ["wasm32_unknown_unknown_js"]
 [dev-dependencies]
 serde_test = "1.0"
 wasm-bindgen-test = "0.3"
+rand_chacha = "0.3"
 
 [features]
 # Treat warnings as a build error.

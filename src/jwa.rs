@@ -10,7 +10,7 @@ use once_cell::sync::Lazy;
 use ring::constant_time::verify_slices_are_equal;
 use ring::rand::SystemRandom;
 use ring::signature::KeyPair;
-use ring::{aead, hmac, rand, signature};
+use ring::{aead, hmac, signature};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -330,7 +330,7 @@ impl SignatureAlgorithm {
             _ => Err("Invalid secret type. A RsaKeyPair is required".to_string())?,
         };
 
-        let rng = rand::SystemRandom::new();
+        let rng = SystemRandom::new();
         let mut signature = vec![0; key_pair.public().modulus_len()];
         let padding_algorithm: &dyn signature::RsaEncoding = match algorithm {
             SignatureAlgorithm::RS256 => &signature::RSA_PKCS1_SHA256,
@@ -362,7 +362,7 @@ impl SignatureAlgorithm {
                 Err(Error::UnsupportedOperation)
             }
             _ => {
-                let rng = rand::SystemRandom::new();
+                let rng = SystemRandom::new();
                 let sig = key_pair.as_ref().sign(&rng, data)?;
                 Ok(sig.as_ref().to_vec())
             }
@@ -510,6 +510,7 @@ impl KeyManagementAlgorithm {
         self,
         content_alg: ContentEncryptionAlgorithm,
         key: &jwk::JWK<T>,
+        rng: &mut Option<impl rand::RngCore>,
     ) -> Result<jwk::JWK<Empty>, Error>
     where
         T: Serialize + DeserializeOwned,
@@ -518,7 +519,7 @@ impl KeyManagementAlgorithm {
 
         match self {
             DirectSymmetricKey => self.cek_direct(key),
-            A128GCMKW | A256GCMKW => self.cek_aes_gcm(content_alg),
+            A128GCMKW | A256GCMKW => self.cek_aes_gcm(content_alg, rng),
             _ => Err(Error::UnsupportedOperation),
         }
     }
@@ -536,8 +537,9 @@ impl KeyManagementAlgorithm {
     fn cek_aes_gcm(
         self,
         content_alg: ContentEncryptionAlgorithm,
+        rng: &mut Option<impl rand::RngCore>,
     ) -> Result<jwk::JWK<Empty>, Error> {
-        let key = content_alg.generate_key()?;
+        let key = content_alg.generate_key(rng)?;
         Ok(jwk::JWK {
             algorithm: jwk::AlgorithmParameters::OctetKey(jwk::OctetKeyParameters {
                 value: key,
@@ -648,7 +650,7 @@ impl KeyManagementAlgorithm {
 
 impl ContentEncryptionAlgorithm {
     /// Convenience function to generate a new random key with the required length
-    pub fn generate_key(self) -> Result<Vec<u8>, Error> {
+    pub fn generate_key(self, rng: &mut Option<impl rand::RngCore>) -> Result<Vec<u8>, Error> {
         use self::ContentEncryptionAlgorithm::*;
 
         let length: usize = match self {
@@ -658,7 +660,18 @@ impl ContentEncryptionAlgorithm {
         };
 
         let mut key: Vec<u8> = vec![0; length];
-        rng().fill(&mut key)?;
+
+        rng.as_mut()
+            .map(|r| {
+                r.try_fill_bytes(&mut key).map_err(|_| {
+                    Error::GenericError("Cannot generate AES-GCM key with supplied RNG".to_string())
+                })
+            })
+            .unwrap_or_else(|| {
+                get_rng().fill(&mut key).map_err(|_| {
+                    Error::GenericError("Cannot generate AES-GCM key with default RNG".to_string())
+                })
+            })?;
         Ok(key)
     }
 
@@ -693,11 +706,14 @@ impl ContentEncryptionAlgorithm {
     }
 
     /// Generate a new random `EncryptionOptions` based on the algorithm
-    pub(crate) fn random_encryption_options(self) -> Result<EncryptionOptions, Error> {
+    pub(crate) fn random_encryption_options(
+        self,
+        rng: &mut Option<impl rand::RngCore>,
+    ) -> Result<EncryptionOptions, Error> {
         use self::ContentEncryptionAlgorithm::*;
         match self {
             A128GCM | A192GCM | A256GCM => Ok(EncryptionOptions::AES_GCM {
-                nonce: random_aes_gcm_nonce()?,
+                nonce: random_aes_gcm_nonce(rng)?,
             }),
             _ => Err(Error::UnsupportedOperation),
         }
@@ -747,7 +763,7 @@ impl ContentEncryptionAlgorithm {
 }
 
 /// Return a psuedo random number generator
-pub(crate) fn rng() -> &'static SystemRandom {
+pub(crate) fn get_rng() -> &'static SystemRandom {
     use std::ops::Deref;
 
     static RANDOM: Lazy<SystemRandom> = Lazy::new(SystemRandom::new);
@@ -813,9 +829,19 @@ fn aes_gcm_decrypt<T: Serialize + DeserializeOwned>(
     Ok(plaintext.to_vec())
 }
 
-pub(crate) fn random_aes_gcm_nonce() -> Result<Vec<u8>, Error> {
-    let mut nonce: Vec<u8> = vec![0; AES_GCM_NONCE_LENGTH];
-    rng().fill(&mut nonce)?;
+pub(crate) fn random_aes_gcm_nonce(rng: &mut Option<impl rand::RngCore>) -> Result<Vec<u8>, Error> {
+    let mut nonce = vec![0u8; AES_GCM_NONCE_LENGTH];
+    rng.as_mut()
+        .map(|r| {
+            r.try_fill_bytes(&mut nonce).map_err(|_| {
+                Error::GenericError("Cannot generate AES-GCM nonce with supplied RNG".to_string())
+            })
+        })
+        .unwrap_or_else(|| {
+            get_rng().fill(&mut nonce).map_err(|_| {
+                Error::GenericError("Cannot generate AES-GCM nonce with supplied RNG".to_string())
+            })
+        })?;
     Ok(nonce)
 }
 
@@ -1171,7 +1197,7 @@ mod tests {
 
     #[test]
     fn rng_is_created() {
-        let rng = rng();
+        let rng = get_rng();
         let mut random: Vec<u8> = vec![0; 8];
         rng.fill(&mut random).unwrap();
     }
@@ -1207,7 +1233,7 @@ mod tests {
     fn aes_gcm_128_encryption_round_trip() {
         const PAYLOAD: &str = "这个世界值得我们奋战！";
         let mut key: Vec<u8> = vec![0; 128 / 8];
-        not_err!(rng().fill(&mut key));
+        not_err!(get_rng().fill(&mut key));
 
         let key = jwk::JWK::<Empty> {
             common: Default::default(),
@@ -1221,7 +1247,7 @@ mod tests {
         let encrypted = not_err!(aes_gcm_encrypt(
             &aead::AES_128_GCM,
             PAYLOAD.as_bytes(),
-            &random_aes_gcm_nonce().unwrap(),
+            &random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
             &[],
             &key,
         ));
@@ -1235,7 +1261,7 @@ mod tests {
     fn aes_gcm_256_encryption_round_trip() {
         const PAYLOAD: &str = "这个世界值得我们奋战！";
         let mut key: Vec<u8> = vec![0; 256 / 8];
-        not_err!(rng().fill(&mut key));
+        not_err!(get_rng().fill(&mut key));
 
         let key = jwk::JWK::<Empty> {
             common: Default::default(),
@@ -1249,7 +1275,7 @@ mod tests {
         let encrypted = not_err!(aes_gcm_encrypt(
             &aead::AES_256_GCM,
             PAYLOAD.as_bytes(),
-            &random_aes_gcm_nonce().unwrap(),
+            &random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
             &[],
             &key,
         ));
@@ -1290,7 +1316,7 @@ mod tests {
     #[test]
     fn dir_cek_returns_provided_key() {
         let mut key: Vec<u8> = vec![0; 256 / 8];
-        not_err!(rng().fill(&mut key));
+        not_err!(get_rng().fill(&mut key));
 
         let key = jwk::JWK::<Empty> {
             common: Default::default(),
@@ -1302,7 +1328,11 @@ mod tests {
         };
 
         let cek_alg = KeyManagementAlgorithm::DirectSymmetricKey;
-        let cek = not_err!(cek_alg.cek(jwa::ContentEncryptionAlgorithm::A256GCM, &key));
+        let cek = not_err!(cek_alg.cek(
+            jwa::ContentEncryptionAlgorithm::A256GCM,
+            &key,
+            &mut None::<rand_chacha::ChaCha20Rng>
+        ));
 
         assert!(
             verify_slices_are_equal(cek.octet_key().unwrap(), key.octet_key().unwrap()).is_ok()
@@ -1313,7 +1343,7 @@ mod tests {
     #[test]
     fn cek_aes128gcmkw_returns_right_key_length() {
         let mut key: Vec<u8> = vec![0; 128 / 8];
-        not_err!(rng().fill(&mut key));
+        not_err!(get_rng().fill(&mut key));
 
         let key = jwk::JWK::<Empty> {
             common: Default::default(),
@@ -1325,13 +1355,21 @@ mod tests {
         };
 
         let cek_alg = KeyManagementAlgorithm::A128GCMKW;
-        let cek = not_err!(cek_alg.cek(jwa::ContentEncryptionAlgorithm::A128GCM, &key));
+        let cek = not_err!(cek_alg.cek(
+            jwa::ContentEncryptionAlgorithm::A128GCM,
+            &key,
+            &mut None::<rand_chacha::ChaCha20Rng>
+        ));
         assert_eq!(cek.octet_key().unwrap().len(), 128 / 8);
         assert!(
             verify_slices_are_equal(cek.octet_key().unwrap(), key.octet_key().unwrap()).is_err()
         );
 
-        let cek = not_err!(cek_alg.cek(jwa::ContentEncryptionAlgorithm::A256GCM, &key));
+        let cek = not_err!(cek_alg.cek(
+            jwa::ContentEncryptionAlgorithm::A256GCM,
+            &key,
+            &mut None::<rand_chacha::ChaCha20Rng>
+        ));
         assert_eq!(cek.octet_key().unwrap().len(), 256 / 8);
         assert!(
             verify_slices_are_equal(cek.octet_key().unwrap(), key.octet_key().unwrap()).is_err()
@@ -1342,7 +1380,7 @@ mod tests {
     #[test]
     fn cek_aes256gcmkw_returns_right_key_length() {
         let mut key: Vec<u8> = vec![0; 256 / 8];
-        not_err!(rng().fill(&mut key));
+        not_err!(get_rng().fill(&mut key));
 
         let key = jwk::JWK::<Empty> {
             common: Default::default(),
@@ -1354,13 +1392,21 @@ mod tests {
         };
 
         let cek_alg = KeyManagementAlgorithm::A256GCMKW;
-        let cek = not_err!(cek_alg.cek(jwa::ContentEncryptionAlgorithm::A128GCM, &key));
+        let cek = not_err!(cek_alg.cek(
+            jwa::ContentEncryptionAlgorithm::A128GCM,
+            &key,
+            &mut None::<rand_chacha::ChaCha20Rng>
+        ));
         assert_eq!(cek.octet_key().unwrap().len(), 128 / 8);
         assert!(
             verify_slices_are_equal(cek.octet_key().unwrap(), key.octet_key().unwrap()).is_err()
         );
 
-        let cek = not_err!(cek_alg.cek(jwa::ContentEncryptionAlgorithm::A256GCM, &key));
+        let cek = not_err!(cek_alg.cek(
+            jwa::ContentEncryptionAlgorithm::A256GCM,
+            &key,
+            &mut None::<rand_chacha::ChaCha20Rng>
+        ));
         assert_eq!(cek.octet_key().unwrap().len(), 256 / 8);
         assert!(
             verify_slices_are_equal(cek.octet_key().unwrap(), key.octet_key().unwrap()).is_err()
@@ -1370,7 +1416,7 @@ mod tests {
     #[test]
     fn aes128gcmkw_key_encryption_round_trip() {
         let mut key: Vec<u8> = vec![0; 128 / 8];
-        not_err!(rng().fill(&mut key));
+        not_err!(get_rng().fill(&mut key));
 
         let key = jwk::JWK::<Empty> {
             common: Default::default(),
@@ -1382,12 +1428,12 @@ mod tests {
         };
 
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
 
         let cek_alg = KeyManagementAlgorithm::A128GCMKW;
-        let enc_alg = jwa::ContentEncryptionAlgorithm::A128GCM; // determines the CEK
-        let cek = not_err!(cek_alg.cek(enc_alg, &key));
+        let enc_alg = ContentEncryptionAlgorithm::A128GCM; // determines the CEK
+        let cek = not_err!(cek_alg.cek(enc_alg, &key, &mut None::<rand_chacha::ChaCha20Rng>));
 
         let encrypted_cek = not_err!(cek_alg.wrap_key(cek.octet_key().unwrap(), &key, &options));
         let decrypted_cek = not_err!(cek_alg.unwrap_key(&encrypted_cek, enc_alg, &key));
@@ -1402,7 +1448,7 @@ mod tests {
     #[test]
     fn aes256gcmkw_key_encryption_round_trip() {
         let mut key: Vec<u8> = vec![0; 256 / 8];
-        not_err!(rng().fill(&mut key));
+        not_err!(get_rng().fill(&mut key));
 
         let key = jwk::JWK::<Empty> {
             common: Default::default(),
@@ -1414,12 +1460,12 @@ mod tests {
         };
 
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
 
         let cek_alg = KeyManagementAlgorithm::A256GCMKW;
-        let enc_alg = jwa::ContentEncryptionAlgorithm::A128GCM; // determines the CEK
-        let cek = not_err!(cek_alg.cek(enc_alg, &key));
+        let enc_alg = ContentEncryptionAlgorithm::A128GCM; // determines the CEK
+        let cek = not_err!(cek_alg.cek(enc_alg, &key, &mut None::<rand_chacha::ChaCha20Rng>));
 
         let encrypted_cek = not_err!(cek_alg.wrap_key(cek.octet_key().unwrap(), &key, &options));
         let decrypted_cek = not_err!(cek_alg.unwrap_key(&encrypted_cek, enc_alg, &key));
@@ -1434,23 +1480,23 @@ mod tests {
     /// `ContentEncryptionAlgorithm::A128GCM` generates CEK of the right length
     #[test]
     fn aes128gcm_key_length() {
-        let enc_alg = jwa::ContentEncryptionAlgorithm::A128GCM;
-        let cek = not_err!(enc_alg.generate_key());
+        let enc_alg = ContentEncryptionAlgorithm::A128GCM;
+        let cek = not_err!(enc_alg.generate_key(&mut None::<rand_chacha::ChaCha20Rng>));
         assert_eq!(cek.len(), 128 / 8);
     }
 
     /// `ContentEncryptionAlgorithm::A256GCM` generates CEK of the right length
     #[test]
     fn aes256gcm_key_length() {
-        let enc_alg = jwa::ContentEncryptionAlgorithm::A256GCM;
-        let cek = not_err!(enc_alg.generate_key());
+        let enc_alg = ContentEncryptionAlgorithm::A256GCM;
+        let cek = not_err!(enc_alg.generate_key(&mut None::<rand_chacha::ChaCha20Rng>));
         assert_eq!(cek.len(), 256 / 8);
     }
 
     #[test]
     fn aes128gcm_encryption_round_trip() {
         let mut key: Vec<u8> = vec![0; 128 / 8];
-        not_err!(rng().fill(&mut key));
+        not_err!(get_rng().fill(&mut key));
 
         let key = jwk::JWK::<Empty> {
             common: Default::default(),
@@ -1462,12 +1508,12 @@ mod tests {
         };
 
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
 
         let payload = "狼よ、我が敵を食らえ！";
         let aad = "My servants never die!";
-        let enc_alg = jwa::ContentEncryptionAlgorithm::A128GCM;
+        let enc_alg = ContentEncryptionAlgorithm::A128GCM;
         let encrypted_payload =
             not_err!(enc_alg.encrypt(payload.as_bytes(), aad.as_bytes(), &key, &options,));
 
@@ -1478,7 +1524,7 @@ mod tests {
     #[test]
     fn aes1256gcm_encryption_round_trip() {
         let mut key: Vec<u8> = vec![0; 256 / 8];
-        not_err!(rng().fill(&mut key));
+        not_err!(get_rng().fill(&mut key));
 
         let key = jwk::JWK::<Empty> {
             common: Default::default(),
@@ -1490,12 +1536,12 @@ mod tests {
         };
 
         let options = EncryptionOptions::AES_GCM {
-            nonce: random_aes_gcm_nonce().unwrap(),
+            nonce: random_aes_gcm_nonce(&mut None::<rand_chacha::ChaCha20Rng>).unwrap(),
         };
 
         let payload = "狼よ、我が敵を食らえ！";
         let aad = "My servants never die!";
-        let enc_alg = jwa::ContentEncryptionAlgorithm::A256GCM;
+        let enc_alg = ContentEncryptionAlgorithm::A256GCM;
         let encrypted_payload =
             not_err!(enc_alg.encrypt(payload.as_bytes(), aad.as_bytes(), &key, &options,));
 
