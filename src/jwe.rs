@@ -179,18 +179,19 @@ pub struct CekAlgorithmHeader {
 }
 
 mod base64 {
+    use base64::Engine;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S: Serializer>(value: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
         value
             .as_ref()
-            .map(|v| base64::encode_config(v, base64::URL_SAFE_NO_PAD))
+            .map(|v| base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(v))
             .serialize(s)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
         Option::<String>::deserialize(d)?
-            .map(|v| base64::decode_config(v.as_bytes(), base64::URL_SAFE_NO_PAD))
+            .map(|v| base64::prelude::BASE64_URL_SAFE_NO_PAD.decode(v.as_bytes()))
             .transpose()
             .map_err(serde::de::Error::custom)
     }

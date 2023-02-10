@@ -24,14 +24,14 @@ doctest = true
 doc = true
 
 [dependencies]
-chrono = { version = "=0.4.22", default-features = false, features = ["clock"] }
-data-encoding = "2.3.2"
-once_cell = "1.8.0"
+chrono = { version = "=0.4.23", default-features = false, features = ["clock"] }
+data-encoding = "2.3"
+once_cell = "1.8"
 num-bigint = "0.4"
 num-traits = "0.2"
-serde = { version = "1.0.126", features=["derive"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
-base64 = "0.13"
+serde = { version = "1", features=["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+base64 = "0.21"
 rand = "0.8"
 
 [dependencies.ring]
@@ -41,7 +41,7 @@ rev = "0f3bf003"
 features = ["wasm32_unknown_unknown_js"]
 
 [dev-dependencies]
-serde_test = "1.0"
+serde_test = "1"
 wasm-bindgen-test = "0.3"
 rand_chacha = "0.3"
 
